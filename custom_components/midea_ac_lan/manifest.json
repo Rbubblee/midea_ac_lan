@@ -14,7 +14,7 @@
     "midealan"
   ],
   "requirements": [
-    "midea-lan==2026.9.1"
+    "midea-lan @ https://github.com/Rbubblee/midea-lan/archive/adf7e184abb17f5d398e43b681d2eae131750dc0.zip"
   ],
   "version": "2026.9.1"
 }
