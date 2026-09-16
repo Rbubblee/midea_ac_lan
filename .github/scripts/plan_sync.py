@@ -120,7 +120,11 @@ def main() -> int:
         )
     tag = release["tag_name"]
 
-    if gh_api(f"repos/{fork}/releases/tags/{tag}") is not None:
+    # A forced re-pin (workflow_dispatch input) only rewrites the manifest, so
+    # an already mirrored release must not make the workflow bail out.
+    force_repin = (os.environ.get("FORCE_REPIN") or "").lower() in {"1", "true", "yes"}
+
+    if gh_api(f"repos/{fork}/releases/tags/{tag}") is not None and not force_repin:
         return emit(
             {
                 "skip": "true",
@@ -130,7 +134,11 @@ def main() -> int:
             },
         )
 
-    base_outputs = {"skip": "false", "tag": tag}
+    base_outputs = {
+        "skip": "false",
+        "tag": tag,
+        "repin_only": "true" if force_repin else "false",
+    }
 
     manifest_text = raw_file(
         f"https://raw.githubusercontent.com/{upstream}/{tag}/{MANIFEST_PATH}",

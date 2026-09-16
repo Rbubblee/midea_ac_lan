@@ -16,6 +16,11 @@ on:
     # later once that build exists.
     - cron: "47 */6 * * *"
   workflow_dispatch:
+    inputs:
+      repin:
+        description: Only re-apply the midea-lan pin (no upstream merge, no new release)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,8 +34,9 @@ env:
   UPSTREAM_REPO: wuwentao/midea_ac_lan
   LIB_UPSTREAM_REPO: wuwentao/midea-lan
   PIN_REPO: Rbubblee/midea-lan
-  PIN_BRANCH: personal/ac-probe-fallback-fix
+  PIN_BRANCH: personal/ac-probe-fallback-fix（针对星光PRO修订）
   FORK_REPO: ${{ github.repository }}
+  FORCE_REPIN: ${{ inputs.repin || 'false' }}
 
 jobs:
   mirror:
@@ -87,7 +93,7 @@ jobs:
         run: echo "${{ steps.plan.outputs.reason }}"
 
       - name: Merge upstream
-        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked' && steps.plan.outputs.repin_only != 'true'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -116,7 +122,7 @@ jobs:
           git push origin HEAD:main
 
       - name: Publish the release
-        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked' && steps.plan.outputs.repin_only != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
@@ -142,6 +148,8 @@ jobs:
             echo
             echo "$pin_note"
             echo
+            echo "The pin carries the #658 probe fixes (针对星光PRO / model 223J6397, subtype 1, and anything else that answers only the BB subprotocol family)."
+            echo
             echo "Install or update from HACS: add this repository as a custom repository (category Integration) and HACS offers ${TAG} as the update."
             echo
             echo "Library change under review: https://github.com/wuwentao/midea-lan/pull/113"
@@ -149,3 +157,14 @@ jobs:
           gh release create "$TAG" --repo "$FORK_REPO" \
             --title "$TAG (fork: #658 probe fix pinned)" \
             --notes-file /tmp/notes.md
+
+      - name: Move the mirrored tag onto the re-pinned commit
+        if: steps.plan.outputs.repin_only == 'true' && steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A re-pin only rewrites the manifest; the release HACS installs has
+          # to follow, otherwise it would keep serving the previous pin.
+          git tag -f "$TAG"
+          git push -f origin "refs/tags/$TAG"
