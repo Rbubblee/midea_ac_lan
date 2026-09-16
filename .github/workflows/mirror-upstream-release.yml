@@ -157,17 +157,26 @@ jobs:
             echo
             echo "Library change under review: https://github.com/wuwentao/midea-lan/pull/113"
           } > /tmp/notes.md
+          # hacs.json asks for a zip release, so HACS downloads this asset
+          # rather than the source archive: a release without it fails with
+          # "Could not download".
+          python3 .github/scripts/build_release_zip.py "$RUNNER_TEMP/midea_ac_lan.zip"
           gh release create "$TAG" --repo "$FORK_REPO" \
             --title "$TAG (fork: #658 probe fix pinned)" \
-            --notes-file /tmp/notes.md
+            --notes-file /tmp/notes.md \
+            "$RUNNER_TEMP/midea_ac_lan.zip"
 
-      - name: Move the mirrored tag onto the re-pinned commit
+      - name: Refresh the mirrored release
         if: steps.plan.outputs.repin_only == 'true' && steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
         run: |
           set -euo pipefail
-          # A re-pin only rewrites the manifest; the release HACS installs has
-          # to follow, otherwise it would keep serving the previous pin.
+          # A re-pin only rewrites the manifest, so the release HACS installs
+          # has to follow: move the tag onto the new commit and rebuild the
+          # asset (which is the part HACS actually downloads).
           git tag -f "$TAG"
           git push -f origin "refs/tags/$TAG"
+          python3 .github/scripts/build_release_zip.py "$RUNNER_TEMP/midea_ac_lan.zip"
+          gh release upload "$TAG" "$RUNNER_TEMP/midea_ac_lan.zip" --clobber
