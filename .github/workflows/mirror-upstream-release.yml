@@ -1,0 +1,151 @@
+name: Mirror upstream release
+
+# Publishes the release upstream just made, with `midea-lan` pinned to the fork
+# build that carries the #658 probe fixes. HACS installs the releases of *this*
+# repository, so this workflow is what keeps "Update" in HACS working while the
+# library change is still under review upstream (wuwentao/midea-lan#113).
+#
+# It never publishes something it cannot verify: when the new upstream release
+# expects a newer `midea-lan` than the fork build is based on, the run stops and
+# opens an issue instead of pairing a new integration with a stale library.
+
+on:
+  schedule:
+    # Six-hourly; the library fork rebuilds its fix branch on its own schedule,
+    # so a release that first shows up as "blocked" is published a few hours
+    # later once that build exists.
+    - cron: "47 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: mirror-upstream-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: wuwentao/midea_ac_lan
+  LIB_UPSTREAM_REPO: wuwentao/midea-lan
+  PIN_REPO: Rbubblee/midea-lan
+  PIN_BRANCH: personal/ac-probe-fallback-fix
+  FORK_REPO: ${{ github.repository }}
+
+jobs:
+  mirror:
+    name: Publish the mirrored release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide what to publish
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/plan_sync.py
+
+      - name: Summarize the decision
+        run: |
+          {
+            echo "### ${MODE:-none}"
+            echo
+            echo "${{ steps.plan.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+
+      - name: Open an issue when publishing is blocked
+        if: steps.plan.outputs.mode == 'blocked'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="midea-lan fork build needs a rebase for ${{ steps.plan.outputs.tag }}"
+          existing=$(gh issue list --repo "$FORK_REPO" --state open --limit 100 \
+            --json title --jq "map(select(.title == \"$title\")) | length")
+          if [ "$existing" != "0" ]; then
+            echo "issue already open: $title"
+            exit 0
+          fi
+          gh issue create --repo "$FORK_REPO" --title "$title" --body "$(printf '%s\n' \
+            'Upstream released this tag, but it cannot be mirrored yet:' \
+            '' \
+            "\`\`\`" \
+            "${{ steps.plan.outputs.reason }}" \
+            "\`\`\`" \
+            '' \
+            "Rebase \`${PIN_BRANCH}\` in ${PIN_REPO} onto the upstream library, let" \
+            '`.github/workflows/keep-fix-build-current.yml` run, then re-run this workflow: it' \
+            'publishes the release on its own once the build is current.')"
+
+      - name: Stop when the release is already mirrored
+        if: steps.plan.outputs.skip == 'true'
+        run: echo "${{ steps.plan.outputs.reason }}"
+
+      - name: Merge upstream
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream main
+          # Conflicts go to upstream: the only intentional difference in this
+          # fork is the midea-lan pin, which is re-applied in the next step.
+          git merge --no-edit -X theirs upstream/main
+
+      - name: Re-apply the midea-lan pin
+        if: steps.plan.outputs.mode == 'pin'
+        run: |
+          python3 .github/scripts/apply_pin.py \
+            --mode pin --url "${{ steps.plan.outputs.pin_url }}"
+
+      - name: Commit the mirrored release
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "nothing to commit, upstream and the pin are already in place"
+          else
+            git commit -am "chore: mirror ${{ steps.plan.outputs.tag }} and keep the midea-lan fork pin"
+          fi
+          git push origin HEAD:main
+
+      - name: Publish the release
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          MODE: ${{ steps.plan.outputs.mode }}
+          REQUIRED: ${{ steps.plan.outputs.required }}
+          BUILD_BASE: ${{ steps.plan.outputs.build_base }}
+          PIN_URL: ${{ steps.plan.outputs.pin_url }}
+        run: |
+          set -euo pipefail
+          # Move the tag in this fork onto the mirrored commit. Upstream's tag
+          # is inherited by forks and still points at upstream's commit, so it
+          # is force-pushed here; a release created on the old tag would serve
+          # the unpinned manifest.
+          git tag -f "$TAG"
+          git push -f origin "refs/tags/$TAG"
+          if [ "$MODE" = "pin" ]; then
+            pin_note="\`midea-lan\` is pinned to \`${PIN_URL#midea-lan @ }\` (based on \`midea-lan\` ${BUILD_BASE}, the version this integration expects), which carries the #658 probe fixes."
+          else
+            pin_note="This release keeps the requirement upstream asked for (midea-lan ${REQUIRED:-unknown}), because that build already ships the #658 fixes, so the pin is no longer needed."
+          fi
+          {
+            echo "Mirror of ${UPSTREAM_REPO} ${TAG}."
+            echo
+            echo "$pin_note"
+            echo
+            echo "Install or update from HACS: add this repository as a custom repository (category Integration) and HACS offers ${TAG} as the update."
+            echo
+            echo "Library change under review: https://github.com/wuwentao/midea-lan/pull/113"
+          } > /tmp/notes.md
+          gh release create "$TAG" --repo "$FORK_REPO" \
+            --title "$TAG (fork: #658 probe fix pinned)" \
+            --notes-file /tmp/notes.md
