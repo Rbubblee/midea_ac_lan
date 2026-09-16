@@ -48,6 +48,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Decide what to publish
         id: plan
         env:
@@ -96,8 +101,6 @@ jobs:
         if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.mode != 'blocked' && steps.plan.outputs.repin_only != 'true'
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch --no-tags upstream main
           # Conflicts go to upstream: the only intentional difference in this
