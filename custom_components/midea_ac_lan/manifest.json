@@ -14,7 +14,7 @@
     "midealan"
   ],
   "requirements": [
-    "midea-lan @ https://github.com/Rbubblee/midea-lan/archive/refs/heads/personal/ac-probe-fallback-fix.zip"
+    "midea-lan @ https://github.com/Rbubblee/midea-lan/archive/refs/heads/personal/ac-probe-fallback-fix%EF%BC%88%E9%92%88%E5%AF%B9%E6%98%9F%E5%85%89PRO%E4%BF%AE%E8%AE%A2%EF%BC%89.zip"
   ],
   "version": "2026.9.1"
 }
