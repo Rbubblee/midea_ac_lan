@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 MANIFEST_PATH = "custom_components/midea_ac_lan/manifest.json"
@@ -60,11 +61,23 @@ def gh_api(path: str) -> object | None:
 
 def raw_file(url: str) -> str | None:
     """Return the text of a raw URL, or None when it cannot be fetched."""
+    # Branch names may contain non-ASCII characters (the fix branch is named
+    # after the appliance it targets), and those have to be percent-encoded
+    # before urllib will even send the request.
+    url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%~")
     try:
         with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT) as response:
             return response.read().decode("utf-8", "replace")
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
         return None
+
+
+def archive_url(repo: str, branch: str) -> str:
+    """Return the source archive URL of a branch, encoded for use in a URL."""
+    return (
+        f"https://github.com/{repo}/archive/refs/heads/"
+        f"{urllib.parse.quote(branch)}.zip"
+    )
 
 
 def version_key(value: str) -> tuple[int, ...]:
@@ -107,7 +120,7 @@ def main() -> int:
     upstream = setting("UPSTREAM_REPO", "wuwentao/midea_ac_lan")
     library_upstream = setting("LIB_UPSTREAM_REPO", "wuwentao/midea-lan")
     pin_repo = setting("PIN_REPO", "Rbubblee/midea-lan")
-    pin_branch = setting("PIN_BRANCH", "personal/ac-probe-fallback-fix")
+    pin_branch = setting("PIN_BRANCH", "personal/ac-probe-fallback-fix（针对星光PRO修订）")
 
     release = gh_api(f"repos/{upstream}/releases/latest")
     if not isinstance(release, dict) or "tag_name" not in release:
@@ -230,8 +243,7 @@ def main() -> int:
         {
             **base_outputs,
             "mode": "pin",
-            "pin_url": f"{LIBRARY_NAME} @ https://github.com/{pin_repo}/archive"
-            f"/refs/heads/{pin_branch}.zip",
+            "pin_url": f"{LIBRARY_NAME} @ {archive_url(pin_repo, pin_branch)}",
             "reason": f"mirror {tag} with the fix build based on {LIBRARY_NAME}"
             f" {build_base}",
         },
